@@ -37,7 +37,7 @@ export default function Home() {
   // Load today’s puzzle + restore progress
   useEffect(() => {
     (async () => {
-      const data = await fetch("/api/today").then(r => r.json());
+      const data = await fetch("/api/today?dev=1").then(r => r.json());
       setClue(data.clue);
       setPuzzleId(data.id);
 
