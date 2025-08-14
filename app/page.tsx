@@ -8,7 +8,7 @@ export default function Home() {
   const [result, setResult] = useState("");
 
   useEffect(() => {
-    fetch("/api/today")
+    fetch("/api/today?dev=1")
       .then(r => r.json())
       .then(data => {
         setClue(data.clue);
