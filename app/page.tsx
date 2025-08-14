@@ -1,6 +1,12 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 
+// ---- Types ----
+type GameStatus = "ready" | "won" | "lost" | "playing";
+function isGameStatus(v: unknown): v is GameStatus {
+  return v === "ready" || v === "won" || v === "lost" || v === "playing";
+}
+
 // ---- Config ----
 const MAX_ATTEMPTS = 6;
 const SITE_NAME = "Reverse Dictionary";
@@ -25,8 +31,8 @@ export default function Home() {
   const [clue, setClue] = useState("");
   const [puzzleId, setPuzzleId] = useState<number | null>(null);
   const [guess, setGuess] = useState("");
-  const [attempts, setAttempts] = useState<boolean[]>([]); // each entry = whether that attempt was correct
-  const [status, setStatus] = useState<"ready" | "won" | "lost" | "playing">("ready");
+  const [attempts, setAttempts] = useState<boolean[]>([]);
+  const [status, setStatus] = useState<GameStatus>("ready");
   const [message, setMessage] = useState("");
 
   // Progress (localStorage)
@@ -37,33 +43,32 @@ export default function Home() {
   // Load today’s puzzle + restore progress
   useEffect(() => {
     (async () => {
-      const data = await fetch("/api/today?dev=1").then(r => r.json());
+      const data: { id: number; clue: string } = await fetch("/api/today").then(r => r.json());
       setClue(data.clue);
       setPuzzleId(data.id);
 
-      // Restore local progress
       const savedDay = localStorage.getItem("rd:lastDayKey");
       const savedId = Number(localStorage.getItem("rd:lastPuzzleId") || 0);
       const savedStreak = Number(localStorage.getItem("rd:streak") || 0);
-      const savedStatus = localStorage.getItem("rd:lastStatus"); // "won" | "lost"
+      const savedStatusRaw = localStorage.getItem("rd:lastStatus");
 
       setStreak(Number.isFinite(savedStreak) ? savedStreak : 0);
 
-      // If already played today on the same puzzle, lock state
-      if (savedDay === dayKey && savedId === data.id && savedStatus) {
-        setStatus(savedStatus as any);
-        setMessage(savedStatus === "won" ? "✅ Already solved today!" : "❌ Out of tries today.");
+      if (savedDay === dayKey && savedId === data.id && savedStatusRaw && isGameStatus(savedStatusRaw)) {
+        setStatus(savedStatusRaw);
+        setMessage(savedStatusRaw === "won" ? "✅ Already solved today!" : "❌ Out of tries today.");
         try {
-          const savedAttempts = JSON.parse(localStorage.getItem("rd:lastAttempts") || "[]");
-          if (Array.isArray(savedAttempts)) setAttempts(savedAttempts);
-        } catch {}
+          const parsed = JSON.parse(localStorage.getItem("rd:lastAttempts") || "[]");
+          if (Array.isArray(parsed)) setAttempts(parsed.filter(Boolean));
+        } catch {
+          // ignore parse errors
+        }
       } else {
         setStatus("playing");
       }
     })();
   }, [dayKey]);
 
-  // Submit a guess
   async function submitGuess() {
     if (status !== "playing" || puzzleId == null) return;
     if (!guess.trim()) {
@@ -76,7 +81,7 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: puzzleId, guess }),
     });
-    const data = await res.json();
+    const data: { correct?: boolean } = await res.json();
     const correct = !!data.correct;
 
     const nextAttempts = [...attempts, correct];
@@ -85,14 +90,13 @@ export default function Home() {
     if (correct) {
       setStatus("won");
       setMessage("✅ Correct!");
-      const newStreak =
-        localStorage.getItem("rd:lastDayKey") === dayKey ? streak : streak + 1;
+      const newStreak = localStorage.getItem("rd:lastDayKey") === dayKey ? streak : streak + 1;
       setStreak(newStreak);
       persistProgress(dayKey, puzzleId, "won", nextAttempts, newStreak);
     } else if (nextAttempts.length >= MAX_ATTEMPTS) {
       setStatus("lost");
       setMessage("❌ Out of tries today.");
-      const newStreak = 0; // reset on loss
+      const newStreak = 0;
       setStreak(newStreak);
       persistProgress(dayKey, puzzleId, "lost", nextAttempts, newStreak);
     } else {
@@ -103,29 +107,24 @@ export default function Home() {
   }
 
   function persistProgress(
-    dayKey: string,
-    puzzleId: number,
-    result: "won" | "lost",
-    attempts: boolean[],
-    streak: number
+    dayKeyVal: string,
+    puzzleIdVal: number,
+    result: Exclude<GameStatus, "ready" | "playing">,
+    attemptsVal: boolean[],
+    streakVal: number
   ) {
-    localStorage.setItem("rd:lastDayKey", dayKey);
-    localStorage.setItem("rd:lastPuzzleId", String(puzzleId));
+    localStorage.setItem("rd:lastDayKey", dayKeyVal);
+    localStorage.setItem("rd:lastPuzzleId", String(puzzleIdVal));
     localStorage.setItem("rd:lastStatus", result);
-    localStorage.setItem("rd:lastAttempts", JSON.stringify(attempts));
-    localStorage.setItem("rd:streak", String(streak));
+    localStorage.setItem("rd:lastAttempts", JSON.stringify(attemptsVal));
+    localStorage.setItem("rd:streak", String(streakVal));
   }
 
-  // Build a Wordle-style share block
   function shareResultText() {
-    const dayNumber = new Date(dayKey).getTime() / 86400000; // rough day index
+    const dayNumber = new Date(dayKey).getTime() / 86400000;
     const header = `${SITE_NAME} #${Math.floor(dayNumber)}\nStreak: ${streak}`;
-    const rows = attempts
-      .slice(0, MAX_ATTEMPTS)
-      .map(ok => (ok ? "🟩" : "🟥"))
-      .join("\n");
-    const attemptsLine =
-      status === "won" ? `Attempts: ${attempts.length}/${MAX_ATTEMPTS}` : `Attempts: X/${MAX_ATTEMPTS}`;
+    const rows = attempts.slice(0, MAX_ATTEMPTS).map(ok => (ok ? "🟩" : "🟥")).join("\n");
+    const attemptsLine = status === "won" ? `Attempts: ${attempts.length}/${MAX_ATTEMPTS}` : `Attempts: X/${MAX_ATTEMPTS}`;
     return `${header}\n${attemptsLine}\n${rows}\n${SITE_URL}`;
   }
 
@@ -135,9 +134,14 @@ export default function Home() {
       await navigator.clipboard.writeText(text);
       setMessage("📋 Copied results to clipboard!");
     } catch {
-      // Fallback: open a prompt
       window.prompt("Copy your results:", text);
     }
+  }
+
+  function resetToday() {
+    ["rd:lastDayKey","rd:lastPuzzleId","rd:lastStatus","rd:lastAttempts"].forEach(k=>localStorage.removeItem(k));
+    // localStorage.removeItem("rd:streak"); // keep streak by default
+    location.reload();
   }
 
   const canGuess = status === "playing" && attempts.length < MAX_ATTEMPTS;
@@ -161,20 +165,14 @@ export default function Home() {
           onKeyDown={e => e.key === "Enter" && canGuess && submitGuess()}
           disabled={!canGuess}
         />
-        <button
-          className="rounded-xl px-4 py-2 border font-medium disabled:opacity-50"
-          onClick={submitGuess}
-          disabled={!canGuess}
-        >
+        <button className="rounded-xl px-4 py-2 border font-medium disabled:opacity-50" onClick={submitGuess} disabled={!canGuess}>
           Guess
         </button>
-        <button
-          className="rounded-xl px-4 py-2 border font-medium"
-          onClick={handleShare}
-          disabled={attempts.length === 0}
-          title="Copy results to clipboard"
-        >
+        <button className="rounded-xl px-4 py-2 border font-medium" onClick={handleShare} disabled={attempts.length === 0} title="Copy results to clipboard">
           Share
+        </button>
+        <button className="rounded-xl px-4 py-2 border font-medium" onClick={resetToday} title="Clear today's progress">
+          Reset Today
         </button>
       </section>
 
