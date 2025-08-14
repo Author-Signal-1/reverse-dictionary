@@ -1,4 +1,5 @@
 [
-  { "id": 1, "clue": "A lover of books", "answer": "bibliophile" },
-  { "id": 2, "clue": "To make amends", "answer": "atone" }
+  { "id": 1, "clue": "A fruit with a fuzzy skin", "answer": "peach" },
+  { "id": 2, "clue": "Opposite of black", "answer": "white" },
+  { "id": 3, "clue": "Ocean predator", "answer": "shark" }
 ]
